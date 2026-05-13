@@ -1,0 +1,52 @@
+name: SCSC Postdoc Scraper
+
+on:
+  # Run on the 1st and 15th of every month at 14:00 UTC (08:00 AM Central Time)
+  schedule:
+    - cron: "0 14 1,15 * *"
+
+  # Allow manual trigger from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # needed to push the updated files back
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so git log works correctly
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install requests beautifulsoup4 pandas openpyxl
+
+      - name: Run scraper
+        working-directory: postdoc
+        run: |
+          python agrilife_postdoc_scraper.py \
+            --output agrilife_postdocs.csv \
+            --faculty-xlsx TAMU_SCSC_Faculty.xlsx \
+            --scsc-output scsc_postdocs.xlsx \
+            --past-dir PastResults \
+            --log-level INFO
+
+      - name: Commit and push results
+        working-directory: postdoc
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add agrilife_postdocs.csv scsc_postdocs.xlsx PastResults/
+          git diff --cached --quiet && echo "No changes to commit." || \
+            git commit -m "chore: automated postdoc scrape $(date -u +%Y-%m-%d)" && \
+            git push
