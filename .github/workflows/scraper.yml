@@ -34,7 +34,6 @@ jobs:
         run: |
           python agrilife_postdoc_scraper.py \
             --output agrilife_postdocs.csv \
-            --faculty-xlsx TAMU_SCSC_Faculty.xlsx \
             --scsc-output scsc_postdocs.xlsx \
             --past-dir PastResults \
             --log-level INFO

@@ -496,7 +496,7 @@ def build_scsc_xlsx(
     Post-processing step:
     1. Snapshot the previous archive to compute NEW vs OLD status.
     2. Archive the full postdoc CSV to PastResults/ with a date stamp.
-    3. Load SCSC faculty names from *faculty_xlsx*.
+    3. Load SCSC faculty names from *faculty_xlsx* (which can be a local path or Google Sheets URL).
     4. Filter postdocs to those supervised by a SCSC faculty member.
     5. Write all scraper columns + 'status' (NEW/OLD) to *out_xlsx*,
        sorted in reverse order by the numeric ID at the end of person_url.
@@ -530,7 +530,25 @@ def build_scsc_xlsx(
 
     # -- Load data --------------------------------------------------------------
     postdocs_df = pd.read_csv(csv_path)
-    faculty_df  = pd.read_excel(faculty_xlsx)
+
+    # Convert Google Sheets edit/view URL to direct export URL if applicable
+    resolved_faculty_xlsx = faculty_xlsx
+    if "docs.google.com/spreadsheets" in faculty_xlsx:
+        match = re.match(r"(https://docs\.google\.com/spreadsheets/d/[^/]+)", faculty_xlsx)
+        if match:
+            resolved_faculty_xlsx = match.group(1) + "/export?format=xlsx"
+            logging.info("Converting Google Sheets URL to export URL: %s", resolved_faculty_xlsx)
+
+    faculty_df  = pd.read_excel(resolved_faculty_xlsx)
+    
+    # Save a local backup if fetched from Google Sheets
+    if resolved_faculty_xlsx != faculty_xlsx:
+        local_backup = "TAMU_SCSC_Faculty.xlsx"
+        try:
+            faculty_df.to_excel(local_backup, index=False)
+            logging.info("Saved local backup of faculty list to %s", local_backup)
+        except Exception as e:
+            logging.warning("Could not save local backup to %s: %s", local_backup, e)
     logging.info(
         "Loaded %s postdoc rows and %s faculty rows.",
         len(postdocs_df), len(faculty_df),
@@ -584,8 +602,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--faculty-xlsx",
-        default="TAMU_SCSC_Faculty.xlsx",
-        help="SCSC faculty Excel file (default: TAMU_SCSC_Faculty.xlsx).",
+        default="https://docs.google.com/spreadsheets/d/1FB-gll0kXQnqY_miXPSSGMEoVQJH0WxM/edit?usp=sharing&ouid=102587337650408258618&rtpof=true&sd=true",
+        help="SCSC faculty Excel file or Google Sheets URL (default: https://docs.google.com/spreadsheets/d/1FB-gll0kXQnqY_miXPSSGMEoVQJH0WxM/edit?usp=sharing&ouid=102587337650408258618&rtpof=true&sd=true).",
     )
     parser.add_argument(
         "--scsc-output",

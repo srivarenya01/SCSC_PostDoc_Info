@@ -6,14 +6,14 @@ An automated tool to scrape the AgriLife People directory for postdoc contact de
 
 - **Recursive Scraping**: Navigates through AgriLife units and subunits to find employees with postdoc-related titles.
 - **Supervisor Extraction**: Fetches supervisor names and contact details for each postdoc.
-- **SCSC Faculty Filtering**: Cross-references supervisors with a provided list of SCSC faculty (`TAMU_SCSC_Faculty.xlsx`).
+- **SCSC Faculty Filtering**: Cross-references supervisors with the SCSC faculty list (fetched from Google Sheets or a local file).
 - **Change Tracking**: Compares the current run with previous results in the `PastResults/` directory to tag postdocs as `NEW` or `OLD`.
 - **Automated Scheduling**: Includes a GitHub Actions workflow to run the scraper biweekly and commit results back to the repository.
 
 ## Project Structure
 
 - `agrilife_postdoc_scraper.py`: The main script that performs both scraping and post-processing.
-- `TAMU_SCSC_Faculty.xlsx`: Input file containing the list of SCSC faculty members to filter by.
+- `TAMU_SCSC_Faculty.xlsx`: Local copy of the SCSC faculty list (downloaded from Google Sheets).
 - `agrilife_postdocs.csv`: Full output containing all discovered postdocs across AgriLife.
 - `scsc_postdocs.xlsx`: Filtered Excel output for SCSC-supervised postdocs, including `NEW`/`OLD` status.
 - `PastResults/`: Archive folder where full CSV results are saved with a datestamp for historical comparison.
@@ -54,7 +54,7 @@ python agrilife_postdoc_scraper.py
 ### Optional Arguments
 
 - `--output`: Path for the main CSV output (default: `agrilife_postdocs.csv`).
-- `--faculty-xlsx`: Path to the faculty list (default: `TAMU_SCSC_Faculty.xlsx`).
+- `--faculty-xlsx`: Google Sheets URL or local path to the faculty Excel file (default: Google Sheets URL).
 - `--scsc-output`: Path for the filtered Excel output (default: `scsc_postdocs.xlsx`).
 - `--past-dir`: Folder for archived results (default: `PastResults`).
 - `--max-workers`: Number of concurrent threads for fetching profile pages (default: `12`).
