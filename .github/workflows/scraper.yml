@@ -34,7 +34,7 @@ jobs:
         run: |
           python agrilife_postdoc_scraper.py \
             --output agrilife_postdocs.csv \
-            --scsc-output scsc_postdocs.xlsx \
+            --scsc-output scsc_postdocs.csv \
             --past-dir PastResults \
             --log-level INFO
 
@@ -43,7 +43,10 @@ jobs:
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add agrilife_postdocs.csv scsc_postdocs.csv PastResults/
+          # Stage files; use || true so a missing file doesn't abort the step
+          git add agrilife_postdocs.csv PastResults/ TAMU_SCSC_Faculty.xlsx || true
+          git add scsc_postdocs.csv || true
+
           git diff --cached --quiet && echo "No changes to commit." || \
             git commit -m "chore: automated postdoc scrape $(date -u +%Y-%m-%d)" && \
             git push
