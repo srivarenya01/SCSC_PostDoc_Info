@@ -45,6 +45,12 @@ UNITS_URL = f"{BASE_URL}/units"
 # - Postdoctoral
 POSTDOC_PATTERN = re.compile(r"\bpost[\s-]*doc(?:toral)?\b", re.IGNORECASE)
 
+# Words to strip from scraped names (social media links, credentials, etc.)
+NAME_STRIP_WORDS = re.compile(
+    r"\b(facebook|instagram|linkedin|twitter|youtube|website|cv|resume|profile|ph\.?d\.?|dr\.?)\b",
+    re.IGNORECASE,
+)
+
 
 @dataclass(frozen=True)
 class UnitRow:
@@ -59,7 +65,8 @@ class UnitRow:
 class PersonRecord:
     """Normalized person record collected from a profile page."""
 
-    name: str
+    first_name: str
+    last_name: str
     person_url: str
     email: str
     phone: str
@@ -242,7 +249,19 @@ class AgriLifeScraper:
             if not fields:
                 return None
 
-            name = self._pick_first_non_empty(fields, ["name", "display name"])
+            raw_name = self._pick_first_non_empty(fields, ["name", "display name"])
+            # Strip social media / credential words from the name
+            clean_name = NAME_STRIP_WORDS.sub("", raw_name)
+            clean_name = self._clean_text(clean_name)
+            # Split into first_name (all but last token) and last_name (last token)
+            name_parts = clean_name.split()
+            if len(name_parts) >= 2:
+                first_name = " ".join(name_parts[:-1])
+                last_name = name_parts[-1]
+            else:
+                first_name = clean_name
+                last_name = ""
+
             email = self._pick_first_non_empty(fields, ["email address", "email"])
             phone = self._pick_first_non_empty(fields, ["phone number", "office phone", "phone"])
             title = self._pick_first_non_empty(fields, ["title", "position", "job title"])
@@ -266,7 +285,8 @@ class AgriLifeScraper:
                         supervisor_phone_cache[supervisor_url] = supervisor_phone
 
             record = PersonRecord(
-                name=name,
+                first_name=first_name,
+                last_name=last_name,
                 person_url=person_url,
                 email=email,
                 phone=phone,
@@ -276,7 +296,10 @@ class AgriLifeScraper:
                 supervisor_url=supervisor_url,
                 supervisor_phone=supervisor_phone,
             )
-            logging.info("Extracted postdoc: %s | %s", name or "(unknown name)", person_url)
+            logging.info(
+                "Extracted postdoc: %s %s | %s",
+                first_name or "(unknown)", last_name, person_url,
+            )
             return record
 
         # Parallelize profile fetches to reduce wall-clock runtime.
@@ -295,7 +318,8 @@ class AgriLifeScraper:
         The caller is responsible for ordering records before writing.
         """
         fieldnames = [
-            "name",
+            "first_name",
+            "last_name",
             "email",
             "phone",
             "title",
@@ -311,7 +335,8 @@ class AgriLifeScraper:
             for record in records:
                 writer.writerow(
                     {
-                        "name": record.name,
+                        "first_name": record.first_name,
+                        "last_name": record.last_name,
                         "email": record.email,
                         "phone": record.phone,
                         "title": record.title,
@@ -486,41 +511,43 @@ def _url_last_id(url: str) -> int:
         return -1
 
 
-def build_scsc_xlsx(
+def build_scsc_csv(
     csv_path: str,
     faculty_xlsx: str,
-    out_xlsx: str,
+    out_csv: str,
     past_dir: str,
 ) -> None:
     """
     Post-processing step:
-    1. Snapshot the previous archive to compute NEW vs OLD status.
+    1. Load previous SCSC output to carry forward first_seen_date values.
     2. Archive the full postdoc CSV to PastResults/ with a date stamp.
-    3. Load SCSC faculty names from *faculty_xlsx* (which can be a local path or Google Sheets URL).
+    3. Load SCSC faculty names from *faculty_xlsx* (local path or Google Sheets URL).
     4. Filter postdocs to those supervised by a SCSC faculty member.
-    5. Write all scraper columns + 'status' (NEW/OLD) to *out_xlsx*,
+    5. Assign first_seen_date: carry forward existing dates, assign today for new entries.
+    6. Write all scraper columns + first_seen_date to *out_csv*,
        sorted in reverse order by the numeric ID at the end of person_url.
     """
     past = Path(past_dir)
     past.mkdir(exist_ok=True)
+    today_str = date.today().strftime("%Y-%m-%d")
 
-    # -- Load previous archive BEFORE writing the new one -----------------------
-    existing_archives = sorted(past.glob("agrilife_postdocs_*.csv"))
-    prev_urls: set[str] = set()
-    if existing_archives:
-        latest_prev = existing_archives[-1]
+    # -- Load previous SCSC output to carry forward first_seen_date -------------
+    # We look for the previous scsc output CSV (same path) to read dates.
+    prev_first_seen: Dict[str, str] = {}
+    if Path(out_csv).exists():
         try:
-            prev_df = pd.read_csv(latest_prev, usecols=["person_url"])
-            prev_urls = set(prev_df["person_url"].dropna().astype(str))
+            prev_scsc = pd.read_csv(out_csv, usecols=["person_url", "first_seen_date"])
+            for _, row in prev_scsc.iterrows():
+                url = str(row["person_url"])
+                dt = str(row.get("first_seen_date", "")).strip()
+                if url and dt and dt != "nan":
+                    prev_first_seen[url] = dt
             logging.info(
-                "Loaded %s URLs from previous archive: %s",
-                len(prev_urls), latest_prev.name,
+                "Loaded %s first_seen_date values from previous SCSC output.",
+                len(prev_first_seen),
             )
         except Exception:
-            logging.warning(
-                "Could not read previous archive %s; all rows will be NEW.",
-                latest_prev,
-            )
+            logging.warning("Could not read previous SCSC output %s; all rows will get today's date.", out_csv)
 
     # -- Archive current CSV ----------------------------------------------------
     stamp = date.today().strftime("%Y%m%d")
@@ -531,6 +558,21 @@ def build_scsc_xlsx(
     # -- Load data --------------------------------------------------------------
     postdocs_df = pd.read_csv(csv_path)
 
+    # Migrate old 'name' column to 'first_name'/'last_name' if needed
+    if "name" in postdocs_df.columns and "first_name" not in postdocs_df.columns:
+        def _split_name(full_name: object):
+            raw = str(full_name).strip() if isinstance(full_name, str) else ""
+            clean = re.sub(r"\s+", " ", NAME_STRIP_WORDS.sub("", raw)).strip()
+            parts = clean.split()
+            if len(parts) >= 2:
+                return " ".join(parts[:-1]), parts[-1]
+            return (clean, "")
+        postdocs_df[["first_name", "last_name"]] = pd.DataFrame(
+            postdocs_df["name"].apply(_split_name).tolist(),
+            index=postdocs_df.index,
+        )
+        logging.info("Migrated legacy 'name' column to 'first_name'/'last_name'.")
+
     # Convert Google Sheets edit/view URL to direct export URL if applicable
     resolved_faculty_xlsx = faculty_xlsx
     if "docs.google.com/spreadsheets" in faculty_xlsx:
@@ -539,8 +581,8 @@ def build_scsc_xlsx(
             resolved_faculty_xlsx = match.group(1) + "/export?format=xlsx"
             logging.info("Converting Google Sheets URL to export URL: %s", resolved_faculty_xlsx)
 
-    faculty_df  = pd.read_excel(resolved_faculty_xlsx)
-    
+    faculty_df = pd.read_excel(resolved_faculty_xlsx)
+
     # Save a local backup if fetched from Google Sheets
     if resolved_faculty_xlsx != faculty_xlsx:
         local_backup = "TAMU_SCSC_Faculty.xlsx"
@@ -549,6 +591,7 @@ def build_scsc_xlsx(
             logging.info("Saved local backup of faculty list to %s", local_backup)
         except Exception as e:
             logging.warning("Could not save local backup to %s: %s", local_backup, e)
+
     logging.info(
         "Loaded %s postdoc rows and %s faculty rows.",
         len(postdocs_df), len(faculty_df),
@@ -564,30 +607,30 @@ def build_scsc_xlsx(
     filtered = postdocs_df[postdocs_df["_sup_norm"].isin(faculty_norm)].copy()
     logging.info("%s postdocs matched a SCSC faculty supervisor.", len(filtered))
 
-    # -- Tag NEW / OLD ----------------------------------------------------------
-    filtered["status"] = filtered["person_url"].apply(
-        lambda u: "OLD" if str(u) in prev_urls else "NEW"
+    # -- Assign first_seen_date -------------------------------------------------
+    filtered["first_seen_date"] = filtered["person_url"].apply(
+        lambda u: prev_first_seen.get(str(u), today_str)
     )
-    new_count = (filtered["status"] == "NEW").sum()
+    new_count = filtered["person_url"].apply(lambda u: str(u) not in prev_first_seen).sum()
     logging.info(
-        "%s NEW postdocs, %s OLD postdocs.", new_count, len(filtered) - new_count
+        "%s newly seen postdocs (assigned today's date), %s returning.",
+        new_count, len(filtered) - new_count,
     )
 
-    # -- All scraper cols + status, sorted reverse by URL trailing ID -----------
+    # -- All scraper cols + first_seen_date, sorted reverse by URL trailing ID --
     all_cols = [
-        "name", "email", "phone", "title", "unit_name",
+        "first_name", "last_name", "email", "phone", "title", "unit_name",
         "person_url", "supervisor_name", "supervisor_url", "supervisor_phone",
-        "status",
+        "first_seen_date",
     ]
     out = filtered[all_cols].copy()
     out["_sort_key"] = out["person_url"].apply(_url_last_id)
     out = out.sort_values("_sort_key", ascending=False).drop(columns=["_sort_key"])
     out = out.reset_index(drop=True)
 
-    # -- Write XLSX -------------------------------------------------------------
-    with pd.ExcelWriter(out_xlsx, engine="openpyxl") as writer:
-        out.to_excel(writer, index=False, sheet_name="SCSC Postdocs")
-    logging.info("Wrote %s rows to %s", len(out), out_xlsx)
+    # -- Write CSV -------------------------------------------------------------
+    out.to_csv(out_csv, index=False)
+    logging.info("Wrote %s rows to %s", len(out), out_csv)
 
 
 def parse_args() -> argparse.Namespace:
@@ -607,8 +650,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--scsc-output",
-        default="scsc_postdocs.xlsx",
-        help="Output XLSX for SCSC-filtered postdocs (default: scsc_postdocs.xlsx).",
+        default="scsc_postdocs.csv",
+        help="Output CSV for SCSC-filtered postdocs (default: scsc_postdocs.csv).",
     )
     parser.add_argument(
         "--past-dir",
@@ -634,7 +677,7 @@ def main() -> int:
     """
     Execute full scrape pipeline:
     units index -> Agri filtering -> recursive unit crawl -> postdoc extraction -> CSV
-    -> archive to PastResults/ -> SCSC-filtered XLSX.
+    -> archive to PastResults/ -> SCSC-filtered CSV.
     """
     args = parse_args()
     logging.basicConfig(
@@ -655,15 +698,18 @@ def main() -> int:
     people = scraper.crawl_units_for_people(agri_units)
 
     records = scraper.build_postdoc_records(people)
-    records = sorted(records, key=lambda r: (r.name.lower(), r.person_url.lower()))
+    records = sorted(
+        records,
+        key=lambda r: ((r.last_name or r.first_name).lower(), r.person_url.lower()),
+    )
     scraper.write_csv(records, args.output)
     logging.info("Wrote %s postdoc records to %s", len(records), args.output)
 
-    # Post-processing: archive full CSV and produce SCSC-filtered XLSX.
-    build_scsc_xlsx(
+    # Post-processing: archive full CSV and produce SCSC-filtered CSV.
+    build_scsc_csv(
         csv_path=args.output,
         faculty_xlsx=args.faculty_xlsx,
-        out_xlsx=args.scsc_output,
+        out_csv=args.scsc_output,
         past_dir=args.past_dir,
     )
 

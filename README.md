@@ -8,14 +8,14 @@ An automated tool to scrape the AgriLife People directory for postdoc contact de
 - **Supervisor Extraction**: Fetches supervisor names and contact details for each postdoc.
 - **SCSC Faculty Filtering**: Cross-references supervisors with the SCSC faculty list (fetched from Google Sheets or a local file).
 - **Change Tracking**: Compares the current run with previous results in the `PastResults/` directory to tag postdocs as `NEW` or `OLD`.
-- **Automated Scheduling**: Includes a GitHub Actions workflow to run the scraper biweekly and commit results back to the repository.
+- **Automated Scheduling**: Includes a GitHub Actions workflow to run the scraper **daily** and commit results back to the repository.
 
 ## Project Structure
 
 - `agrilife_postdoc_scraper.py`: The main script that performs both scraping and post-processing.
 - `TAMU_SCSC_Faculty.xlsx`: Local copy of the SCSC faculty list (downloaded from Google Sheets).
 - `agrilife_postdocs.csv`: Full output containing all discovered postdocs across AgriLife.
-- `scsc_postdocs.xlsx`: Filtered Excel output for SCSC-supervised postdocs, including `NEW`/`OLD` status.
+- `scsc_postdocs.csv`: Filtered CSV output for SCSC-supervised postdocs, including `first_seen_date`.
 - `PastResults/`: Archive folder where full CSV results are saved with a datestamp for historical comparison.
 - `.github/workflows/scraper.yml`: GitHub Actions configuration for automated biweekly runs.
 
@@ -68,10 +68,11 @@ The included GitHub Action is configured to:
 
 You can also trigger a run manually via the **Actions** tab in your GitHub repository by selecting the "SCSC Postdoc Scraper" workflow and clicking "Run workflow".
 
-## Output Columns (Excel)
+## Output Columns (CSV)
 
-The `scsc_postdocs.xlsx` file includes the following columns:
-- `name`: Postdoc name
+The `scsc_postdocs.csv` file includes the following columns:
+- `first_name`: Postdoc first name (all name words except the last)
+- `last_name`: Postdoc last name (last word of the cleaned name)
 - `email`: Postdoc email
 - `phone`: Postdoc phone number
 - `title`: Postdoc job title
@@ -80,4 +81,4 @@ The `scsc_postdocs.xlsx` file includes the following columns:
 - `supervisor_name`: Name of the supervisor
 - `supervisor_url`: Link to supervisor profile
 - `supervisor_phone`: Supervisor contact phone
-- `status`: `NEW` if not found in the previous run, `OLD` otherwise.
+- `first_seen_date`: The date (`YYYY-MM-DD`) when this postdoc was first observed by the scraper.
